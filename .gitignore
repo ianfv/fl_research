@@ -23,6 +23,7 @@
 *.pdf
 *.doc
 *.docx
+*.md
 
 # Checkpoints and logs
 checkpoints/
@@ -92,9 +93,7 @@ Thumbs.db
 *.cache
 .cache/
 
-# FL-specific
-client_data/
-server_data/
-aggregated_models/
-local_models/
-round_*/
+# Directories
+data/
+figures/
+results/
