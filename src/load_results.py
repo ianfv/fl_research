@@ -2,6 +2,7 @@
 Load and analyze federated learning partition metrics from JSON result files.
 """
 
+import argparse
 import json
 import pandas as pd
 from pathlib import Path
@@ -11,7 +12,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RESULTS_DIR = PROJECT_ROOT / "results"
 
 
-def load_results(results_dir: str | Path | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_results(
+    results_dir: str | Path | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Load all metrics JSON files from the results directory.
 
@@ -107,10 +110,17 @@ def get_comparison_table(aggregate_df: pd.DataFrame) -> pd.DataFrame:
     df["config"] = df.apply(config_label, axis=1)
 
     # Select key columns for comparison
-    comparison = df[[
-        "config", "method", "entropy_mean", "entropy_std",
-        "kl_div_mean", "dominant_classes_mean", "samples_std"
-    ]].copy()
+    comparison = df[
+        [
+            "config",
+            "method",
+            "entropy_mean",
+            "entropy_std",
+            "kl_div_mean",
+            "dominant_classes_mean",
+            "samples_std",
+        ]
+    ].copy()
 
     # Sort by entropy (lower = more non-IID)
     comparison = comparison.sort_values("entropy_mean")
@@ -118,29 +128,75 @@ def get_comparison_table(aggregate_df: pd.DataFrame) -> pd.DataFrame:
     return comparison
 
 
-if __name__ == "__main__":
-    # Load all results
-    aggregate_df, per_client_df = load_results()
+def get_simplified_table(aggregate_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create a simplified table with key metrics only.
+    """
+    df = aggregate_df.copy()
 
-    print("=" * 70)
-    print("AGGREGATE METRICS (all configurations)")
-    print("=" * 70)
+    # Create a readable config column
+    def config_label(row):
+        if row["method"] == "dirichlet":
+            return f"Dirichlet (α={row['alpha']})"
+        else:
+            return f"Sharding ({row['shards_per_client']} shards)"
+
+    df["config"] = df.apply(config_label, axis=1)
+
+    # Select only the most important columns
+    simplified = df[
+        [
+            "config",
+            "entropy_mean",
+            "kl_div_mean",
+            "samples_mean",
+        ]
+    ].copy()
+
+    # Rename for clarity
+    simplified.columns = ["Config", "Entropy", "KL Divergence", "Mean Samples/Client"]
+
+    # Sort by entropy (lower = more non-IID)
+    simplified = simplified.sort_values("Entropy")
+
+    return simplified
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Load and display federated learning partition metrics."
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Output full metrics table with all columns",
+    )
+    parser.add_argument(
+        "--results-dir",
+        type=Path,
+        default=None,
+        help="Path to results directory (default: PROJECT_ROOT/results)",
+    )
+    args = parser.parse_args()
+
+    aggregate_df, per_client_df = load_results(args.results_dir)
+
+    if aggregate_df.empty:
+        print("No results found.")
+        exit(1)
+
     pd.set_option("display.max_columns", None)
     pd.set_option("display.width", None)
-    print(aggregate_df.to_string(index=False))
 
-    print("\n" + "=" * 70)
-    print("COMPARISON TABLE (sorted by heterogeneity - lower entropy = more non-IID)")
-    print("=" * 70)
-    comparison = get_comparison_table(aggregate_df)
-    print(comparison.to_string(index=False))
-
-    print("\n" + "=" * 70)
-    print("PER-CLIENT METRICS (first 20 rows)")
-    print("=" * 70)
-    print(per_client_df.head(20).to_string(index=False))
-
-    print("\n" + "=" * 70)
-    print("SUMMARY STATISTICS BY METHOD")
-    print("=" * 70)
-    print(aggregate_df.groupby("method")[["entropy_mean", "kl_div_mean", "samples_std"]].describe())
+    if args.verbose:
+        print("=" * 80)
+        print("FULL AGGREGATE METRICS")
+        print("=" * 80)
+        print(aggregate_df.to_string(index=False))
+    else:
+        print("Partition Metrics Summary (sorted by heterogeneity)")
+        print("-" * 55)
+        simplified = get_simplified_table(aggregate_df)
+        print(simplified.to_string(index=False))
+        print("\nRun with --verbose for full metrics.")

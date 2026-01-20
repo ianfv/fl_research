@@ -2,9 +2,8 @@
 Visualization Tools for Federated Learning Data Partitions
 
 Provides functions for visualizing client data distributions:
-- Per-client class histograms
+- Stacked horizontal bar charts (class proportions per client)
 - Heatmaps (clients x classes)
-- Distribution comparison overlays
 """
 
 import numpy as np
@@ -43,48 +42,6 @@ def get_class_counts(client_data_map, labels, num_classes):
             counts[client_id, c] = np.sum(client_labels == c)
 
     return counts
-
-
-def plot_client_histograms(client_data_map, labels, num_classes,
-                           num_clients_to_show=5, title="Client Class Distributions",
-                           save_path=None):
-    """
-    Plot class distribution histograms for selected clients.
-
-    Args:
-        client_data_map: dict mapping client_id -> array of indices
-        labels: array of all labels
-        num_classes: number of classes
-        num_clients_to_show: number of clients to display
-        title: plot title
-        save_path: path to save figure (optional)
-    """
-    counts = get_class_counts(client_data_map, labels, num_classes)
-    num_clients = min(num_clients_to_show, len(client_data_map))
-
-    fig, axes = plt.subplots(1, num_clients, figsize=(3 * num_clients, 4))
-    if num_clients == 1:
-        axes = [axes]
-
-    class_labels = list(range(num_classes))
-
-    for i, ax in enumerate(axes):
-        ax.bar(class_labels, counts[i], color='steelblue', edgecolor='black')
-        ax.set_xlabel('Class')
-        ax.set_ylabel('Count')
-        ax.set_title(f'Client {i}')
-        ax.set_xticks(class_labels)
-
-    plt.suptitle(title, fontsize=14, y=1.02)
-    plt.tight_layout()
-
-    if save_path:
-        ensure_dirs()
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved histogram to {save_path}")
-
-    plt.close()
-    return fig
 
 
 def plot_heatmap(client_data_map, labels, num_classes,
@@ -136,11 +93,14 @@ def plot_heatmap(client_data_map, labels, num_classes,
     return fig
 
 
-def plot_distribution_comparison(client_data_map, labels, num_classes,
-                                  title="Client vs Global Distribution",
-                                  save_path=None):
+def plot_class_distribution_stacked(client_data_map, labels, num_classes,
+                                     title="Class Distribution per Client",
+                                     save_path=None):
     """
-    Plot overlay of all client distributions vs global distribution.
+    Plot stacked horizontal bar chart of class proportions for each client.
+
+    Each client is a row, and classes are shown as colored segments
+    that sum to 1.0, making it easy to compare distributions.
 
     Args:
         client_data_map: dict mapping client_id -> array of indices
@@ -149,44 +109,45 @@ def plot_distribution_comparison(client_data_map, labels, num_classes,
         title: plot title
         save_path: path to save figure (optional)
     """
-    labels = np.array(labels)
     counts = get_class_counts(client_data_map, labels, num_classes)
+    num_clients = len(client_data_map)
 
-    # Normalize to distributions
-    distributions = counts / counts.sum(axis=1, keepdims=True)
+    # Normalize to proportions (each row sums to 1)
+    row_sums = counts.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1  # Avoid division by zero
+    proportions = counts / row_sums
 
-    # Global distribution
-    global_counts = np.bincount(labels, minlength=num_classes)
-    global_dist = global_counts / global_counts.sum()
+    # Transpose so each row is a class: shape (num_classes, num_clients)
+    proportions = proportions.T
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(10, max(6, num_clients * 0.4)))
 
-    class_labels = np.arange(num_classes)
+    # Use a colormap with distinct colors for each class
+    colors = plt.cm.tab10(np.linspace(0, 1, num_classes))
 
-    # Plot each client distribution (thin, semi-transparent lines)
-    for i in range(len(client_data_map)):
-        ax.plot(class_labels, distributions[i], 'b-', alpha=0.3, linewidth=1)
+    # Create stacked horizontal bars
+    client_indices = np.arange(num_clients)
+    left = np.zeros(num_clients)
 
-    # Plot global distribution (thick black line)
-    ax.plot(class_labels, global_dist, 'k-', linewidth=3, label='Global')
+    for class_idx in range(num_classes):
+        ax.barh(client_indices, proportions[class_idx], left=left,
+                color=colors[class_idx], label=f'Class {class_idx}', height=0.8)
+        left += proportions[class_idx]
 
-    # Plot mean client distribution (thick red dashed line)
-    mean_dist = distributions.mean(axis=0)
-    ax.plot(class_labels, mean_dist, 'r--', linewidth=2, label='Mean Client')
-
-    ax.set_xlabel('Class', fontsize=12)
-    ax.set_ylabel('Proportion', fontsize=12)
+    ax.set_xlabel('Proportion', fontsize=12)
+    ax.set_ylabel('Client', fontsize=12)
     ax.set_title(title, fontsize=14)
-    ax.set_xticks(class_labels)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    ax.set_yticks(client_indices)
+    ax.set_yticklabels([f'{i}' for i in range(num_clients)])
+    ax.set_xlim(0, 1)
+    ax.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), title='Class')
 
     plt.tight_layout()
 
     if save_path:
         ensure_dirs()
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved distribution comparison to {save_path}")
+        print(f"Saved stacked distribution to {save_path}")
 
     plt.close()
     return fig
@@ -246,12 +207,11 @@ def visualize_partition(client_data_map, labels, num_classes,
 
     print(f"\nGenerating visualizations for {base_name}...")
 
-    # Histograms
-    plot_client_histograms(
+    # Stacked class distribution (main visualization)
+    plot_class_distribution_stacked(
         client_data_map, labels, num_classes,
-        num_clients_to_show=5,
-        title=f"{dataset_name.upper()} - {method_name} ({param_value}) - Client Histograms",
-        save_path=str(FIGURES_DIR / f"{base_name}_histograms.png")
+        title=f"{dataset_name.upper()} - {method_name} ({param_value}) - Class Distribution",
+        save_path=str(FIGURES_DIR / f"{base_name}_class_distribution.png")
     )
 
     # Heatmap
@@ -260,13 +220,6 @@ def visualize_partition(client_data_map, labels, num_classes,
         title=f"{dataset_name.upper()} - {method_name} ({param_value}) - Heatmap",
         save_path=str(FIGURES_DIR / f"{base_name}_heatmap.png"),
         normalize=True
-    )
-
-    # Distribution comparison
-    plot_distribution_comparison(
-        client_data_map, labels, num_classes,
-        title=f"{dataset_name.upper()} - {method_name} ({param_value}) - Distribution Comparison",
-        save_path=str(FIGURES_DIR / f"{base_name}_distribution.png")
     )
 
     # Sample counts
